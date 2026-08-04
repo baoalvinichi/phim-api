@@ -9,65 +9,73 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// Lấy danh sách phim ngắn gọn
+// Hàm lấy danh sách phim
 async function fetchMovies(endpoint, page = 1) {
     try {
         const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${page}`;
-        const response = await axios.get(url, { headers: HEADERS, timeout: 5000 });
+        const response = await axios.get(url, { headers: HEADERS, timeout: 8000 });
         const items = response.data?.data?.items || [];
         const cdnUrl = response.data?.data?.APP_DOMAIN_CDN_IMAGE || 'https://img.ophim.live/uploads/movies/';
 
         return items.map(item => ({
-            title: item.name ? item.name.replace(/,/g, ' -') : 'Phim',
-            slug: item.slug,
-            poster: `${cdnUrl}${item.poster_url}`
+            vod_id: item.slug,
+            vod_name: item.name,
+            vod_pic: `${cdnUrl}${item.poster_url}`,
+            vod_remarks: item.episode_current || ''
         }));
     } catch (e) {
         return [];
     }
 }
 
-// Route kiểm tra server còn sống (Wake up)
-app.get('/', (req, res) => res.send('Phim API for Monplayer is active!'));
+// 1. Endpoint Cấu hình chuẩn Extension dành riêng cho Monplayer
+app.get('/monplayer.json', (req, res) => {
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
 
-// Playlist M3U chuẩn tương thích Monplayer / IPTV
-app.get('/playlist.m3u', async (req, res) => {
-    try {
-        // Lấy đồng thời Phim Bộ & Phim Lẻ
-        const [phimBo, phimLe] = await Promise.all([
-            fetchMovies('phim-bo', 1),
-            fetchMovies('phim-le', 1)
-        ]);
-
-        let m3u = '#EXTM3U url-tvg="" x-tvg-url=""\n';
-
-        const protocol = req.headers['x-forwarded-proto'] || 'https';
-        const host = req.get('host');
-        const baseUrl = `${protocol}://${host}`;
-
-        // Nhóm Phim Bộ
-        phimBo.slice(0, 20).forEach(movie => {
-            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 group-title="PHIM BỘ" tvg-logo="${movie.poster}", ${movie.title}\n`;
-            m3u += `${streamUrl}\n`;
-        });
-
-        // Nhóm Phim Lẻ
-        phimLe.slice(0, 20).forEach(movie => {
-            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 group-title="PHIM LẺ" tvg-logo="${movie.poster}", ${movie.title}\n`;
-            m3u += `${streamUrl}\n`;
-        });
-
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.status(200).send(m3u);
-    } catch (error) {
-        res.status(500).send('#EXTM3U\n# Engine Error');
-    }
+    res.json({
+        sites: [
+            {
+                key: "phim_bo",
+                name: "📺 PHIM BỘ",
+                type: 3,
+                api: `${baseUrl}/api/cms?type=phim-bo`,
+                searchable: 1,
+                quickSearch: 1,
+                filterable: 1
+            },
+            {
+                key: "phim_le",
+                name: "🎬 PHIM LẺ",
+                type: 3,
+                api: `${baseUrl}/api/cms?type=phim-le`,
+                searchable: 1,
+                quickSearch: 1,
+                filterable: 1
+            }
+        ]
+    });
 });
 
-// Chuyển hướng trực tiếp luồng video .m3u8
+// 2. API Trả dữ liệu danh sách phim chuẩn CMS cho Monplayer
+app.get('/api/cms', async (req, res) => {
+    const type = req.query.type || 'phim-bo';
+    const page = req.query.pg || 1;
+    const movies = await fetchMovies(type, page);
+
+    res.json({
+        code: 1,
+        msg: "phản hồi thành công",
+        page: Number(page),
+        pagecount: 100,
+        limit: 20,
+        total: 2000,
+        list: movies
+    });
+});
+
+// 3. API lấy link phát video m3u8
 app.get('/api/get-stream', async (req, res) => {
     const slug = req.query.slug || req.query.url;
     if (!slug) return res.status(400).send('Missing slug');
