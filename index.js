@@ -9,8 +9,8 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// 1. Cấu hình JSON cho Monplayer
-app.get(['/', '/monplayer', '/index.json'], (req, res) => {
+// 1. Cấu hình chính cho Monplayer
+app.get(['/', '/index.json', '/monplayer'], (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
@@ -19,20 +19,30 @@ app.get(['/', '/monplayer', '/index.json'], (req, res) => {
     const baseUrl = `${protocol}://${host}`;
 
     res.json({
-        urls: [
+        sites: [
             {
+                key: "phim_bo",
                 name: "📺 PHIM BỘ OPHIM",
-                url: `${baseUrl}/api/cms?type=phim-bo`
+                type: 3,
+                api: `${baseUrl}/api/cms?type=phim-bo`,
+                searchable: 1,
+                quickSearch: 1,
+                filterable: 1
             },
             {
+                key: "phim_le",
                 name: "🎬 PHIM LẺ OPHIM",
-                url: `${baseUrl}/api/cms?type=phim-le`
+                type: 3,
+                api: `${baseUrl}/api/cms?type=phim-le`,
+                searchable: 1,
+                quickSearch: 1,
+                filterable: 1
             }
         ]
     });
 });
 
-// 2. API trả dữ liệu danh sách phim
+// 2. API danh sách phim
 app.get('/api/cms', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const type = req.query.type || 'phim-bo';
@@ -61,7 +71,7 @@ app.get('/api/cms', async (req, res) => {
             list: movies
         });
     } catch (error) {
-        res.status(500).json({ code: 0, msg: "Lỗi kết nối", list: [] });
+        res.status(500).json({ code: 0, msg: "Lỗi", list: [] });
     }
 });
 
