@@ -1,0 +1,22 @@
+{
+  "sites": [
+    {
+      "key": "phim_bo",
+      "name": "📺 PHIM BỘ OPHIM",
+      "type": 3,
+      "api": "https://phim-e54452bx-baoalvinichi1.vercel.app/api/cms?type=phim-bo",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1
+    },
+    {
+      "key": "phim_le",
+      "name": "🎬 PHIM LẺ OPHIM",
+      "type": 3,
+      "api": "https://phim-e54452bx-baoalvinichi1.vercel.app/api/cms?type=phim-le",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1
+    }
+  ]
+}
