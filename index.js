@@ -9,126 +9,82 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// Hàm lấy thông tin chi tiết từng phim (tập phim, link stream m3u8)
-async function getMovieDetail(slug) {
+// Hàm lấy dữ liệu từ nguồn phim
+async function fetchMovies(endpoint, page = 1) {
     try {
-        const { data } = await axios.get(`https://ophim1.com/phim/${slug}`, { headers: HEADERS, timeout: 5000 });
-        const item = data.movie || {};
-        const episodes = data.episodes || [];
-        
-        let playUrl = '';
-        if (episodes.length > 0 && episodes[0].server_data.length > 0) {
-            const epList = episodes[0].server_data.map(ep => `${ep.name}$${ep.link_m3u8}`);
-            playUrl = epList.join('#');
-        }
-
-        const cdnUrl = 'https://img.ophim.live/uploads/movies/';
-        return {
-            vod_id: item.slug || slug,
-            vod_name: item.name || '',
-            vod_pic: item.poster_url ? (item.poster_url.startsWith('http') ? item.poster_url : `${cdnUrl}${item.poster_url}`) : '',
-            vod_remarks: item.episode_current || '',
-            vod_actor: item.actor ? item.actor.join(', ') : '',
-            vod_director: item.director ? item.director.join(', ') : '',
-            vod_content: item.content ? item.content.replace(/<[^>]*>?/gm, '') : '',
-            vod_play_from: 'OPhim',
-            vod_play_url: playUrl
-        };
-    } catch (e) {
-        return null;
-    }
-}
-
-// Hàm cấu hình chung cho Monplayer
-function getMonplayerConfig(baseUrl) {
-    return {
-        sites: [
-            {
-                key: "phim_bo",
-                name: "📺 PHIM BỘ",
-                type: 3,
-                api: `${baseUrl}/api/cms?type=phim-bo`,
-                searchable: 1,
-                quickSearch: 1,
-                filterable: 1
-            },
-            {
-                key: "phim_le",
-                name: "🎬 PHIM LẺ",
-                type: 3,
-                api: `${baseUrl}/api/cms?type=phim-le`,
-                searchable: 1,
-                quickSearch: 1,
-                filterable: 1
-            }
-        ]
-    };
-}
-
-// 1. Trang chủ chính (đáp ứng link dạng https://phim-api.onrender.com hoặc https://phim-api.onrender.com/phim)
-app.get(['/', '/phim'], (req, res) => {
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.get('host');
-    const baseUrl = `${protocol}://${host}`;
-    res.json(getMonplayerConfig(baseUrl));
-});
-
-// Giữ lại endpoint .json phụ phòng khi cần
-app.get('/monplayer.json', (req, res) => {
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.get('host');
-    const baseUrl = `${protocol}://${host}`;
-    res.json(getMonplayerConfig(baseUrl));
-});
-
-// 2. API xử lý dữ liệu danh sách & chi tiết phim chuẩn Monplayer
-app.get('/api/cms', async (req, res) => {
-    try {
-        const type = req.query.type || 'phim-bo';
-        const page = req.query.pg || 1;
-        const ids = req.query.ids;
-
-        // Nếu Monplayer gọi thông tin tập phim theo ID
-        if (ids) {
-            const slugList = ids.split(',');
-            const details = await Promise.all(slugList.map(slug => getMovieDetail(slug)));
-            const validDetails = details.filter(d => d !== null);
-
-            return res.json({
-                code: 1,
-                msg: "ok",
-                page: 1,
-                pagecount: 1,
-                limit: validDetails.length,
-                total: validDetails.length,
-                list: validDetails
-            });
-        }
-
-        // Trả danh sách phim theo phân trang
-        const url = `https://ophim1.com/v1/api/danh-sach/${type}?page=${page}`;
+        const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${page}`;
         const response = await axios.get(url, { headers: HEADERS, timeout: 8000 });
         const items = response.data?.data?.items || [];
         const cdnUrl = response.data?.data?.APP_DOMAIN_CDN_IMAGE || 'https://img.ophim.live/uploads/movies/';
 
-        const movies = items.map(item => ({
-            vod_id: item.slug,
-            vod_name: item.name,
-            vod_pic: `${cdnUrl}${item.poster_url}`,
-            vod_remarks: item.episode_current || ''
+        return items.map(item => ({
+            title: item.name ? item.name.replace(/,/g, ' -') : 'Phim',
+            slug: item.slug,
+            poster: `${cdnUrl}${item.poster_url}`
         }));
+    } catch (e) {
+        return [];
+    }
+}
 
-        res.json({
-            code: 1,
-            msg: "ok",
-            page: Number(page),
-            pagecount: response.data?.data?.params?.pagination?.totalPages || 100,
-            limit: movies.length,
-            total: 2000,
-            list: movies
+// 1. Route Playlist M3U tổng hợp dành cho TiviMate
+app.get(['/playlist.m3u', '/playlist.m3u8', '/tivimate.m3u'], async (req, res) => {
+    try {
+        const [phimBo, phimLe] = await Promise.all([
+            fetchMovies('phim-bo', 1),
+            fetchMovies('phim-le', 1)
+        ]);
+
+        let m3u = '#EXTM3U\n';
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const host = req.get('host');
+        const baseUrl = `${protocol}://${host}`;
+
+        // Thêm danh mục Phim Bộ
+        phimBo.slice(0, 20).forEach(movie => {
+            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
+            m3u += `#EXTINF:-1 group-title="PHIM BỘ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `${streamUrl}\n`;
         });
+
+        // Thêm danh mục Phim Lẻ
+        phimLe.slice(0, 20).forEach(movie => {
+            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
+            m3u += `#EXTINF:-1 group-title="PHIM LẺ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `${streamUrl}\n`;
+        });
+
+        res.setHeader('Content-Type', 'audio/x-mpegurl; charset=utf-8');
+        res.setHeader('Content-Disposition', 'inline; filename="playlist.m3u"');
+        res.status(200).send(m3u);
     } catch (error) {
-        res.status(500).json({ code: 0, msg: error.message, list: [] });
+        res.status(500).send('#EXTM3U\n# Error');
+    }
+});
+
+// 2. Route chuyển hướng trực tiếp đến luồng video m3u8
+app.get('/api/get-stream', async (req, res) => {
+    const slug = req.query.slug || req.query.url;
+    if (!slug) return res.status(400).send('Missing slug');
+
+    try {
+        const cleanSlug = slug.includes('/') ? slug.split('/').pop() : slug;
+        const { data } = await axios.get(`https://ophim1.com/phim/${cleanSlug}`, { headers: HEADERS, timeout: 5000 });
+        
+        const episodes = data.episodes || [];
+        let streamUrl = '';
+
+        if (episodes.length > 0 && episodes[0].server_data.length > 0) {
+            streamUrl = episodes[0].server_data[0].link_m3u8;
+        }
+
+        if (streamUrl) {
+            res.redirect(302, streamUrl);
+        } else {
+            res.status(404).send('Stream not found');
+        }
+    } catch (error) {
+        res.status(500).send('Error');
     }
 });
 
