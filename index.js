@@ -9,11 +9,11 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// Hàm lấy dữ liệu từ nguồn phim
+// Hàm lấy phim ngắn gọn
 async function fetchMovies(endpoint, page = 1) {
     try {
         const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${page}`;
-        const response = await axios.get(url, { headers: HEADERS, timeout: 8000 });
+        const response = await axios.get(url, { headers: HEADERS, timeout: 5000 });
         const items = response.data?.data?.items || [];
         const cdnUrl = response.data?.data?.APP_DOMAIN_CDN_IMAGE || 'https://img.ophim.live/uploads/movies/';
 
@@ -27,42 +27,45 @@ async function fetchMovies(endpoint, page = 1) {
     }
 }
 
-// 1. Route Playlist M3U tổng hợp dành cho TiviMate
-app.get(['/playlist.m3u', '/playlist.m3u8', '/tivimate.m3u'], async (req, res) => {
+// Route Ping giữ server không bị ngủ
+app.get('/', (req, res) => res.send('API OK'));
+
+// Playlist M3U chuẩn TiviMate VOD
+app.get(['/playlist.m3u', '/playlist.m3u8'], async (req, res) => {
     try {
         const [phimBo, phimLe] = await Promise.all([
             fetchMovies('phim-bo', 1),
             fetchMovies('phim-le', 1)
         ]);
 
-        let m3u = '#EXTM3U\n';
+        let m3u = '#EXTM3U x-tvg-url=""\n';
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = req.get('host');
         const baseUrl = `${protocol}://${host}`;
 
-        // Thêm danh mục Phim Bộ
+        // Danh mục PHIM BỘ
         phimBo.slice(0, 20).forEach(movie => {
             const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 group-title="PHIM BỘ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM BỘ", ${movie.title}\n`;
             m3u += `${streamUrl}\n`;
         });
 
-        // Thêm danh mục Phim Lẻ
+        // Danh mục PHIM LẺ
         phimLe.slice(0, 20).forEach(movie => {
             const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 group-title="PHIM LẺ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM LẺ", ${movie.title}\n`;
             m3u += `${streamUrl}\n`;
         });
 
-        res.setHeader('Content-Type', 'audio/x-mpegurl; charset=utf-8');
-        res.setHeader('Content-Disposition', 'inline; filename="playlist.m3u"');
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
         res.status(200).send(m3u);
     } catch (error) {
         res.status(500).send('#EXTM3U\n# Error');
     }
 });
 
-// 2. Route chuyển hướng trực tiếp đến luồng video m3u8
+// Chuyển hướng luồng phát
 app.get('/api/get-stream', async (req, res) => {
     const slug = req.query.slug || req.query.url;
     if (!slug) return res.status(400).send('Missing slug');
