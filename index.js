@@ -9,93 +9,74 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// Hàm lấy dữ liệu và chuẩn hóa danh sách đúng 20 phim/trang
-async function fetchMoviesCount(endpoint, page = 1, limit = 20) {
-    // API gốc trả 10 item/page v1, ta tính toán số trang gốc cần gọi
-    const startPage = ((page - 1) * limit / 10) + 1;
-    const endPage = startPage + (limit / 10) - 1;
-    
-    let allItems = [];
-    let cdnUrl = 'https://img.ophim.live/uploads/movies/';
+// Hàm lấy dữ liệu theo danh mục
+async function fetchMovies(endpoint, page = 1) {
+    const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${page}`;
+    const response = await axios.get(url, { headers: HEADERS });
+    const items = response.data?.data?.items || [];
+    const cdnUrl = response.data?.data?.APP_DOMAIN_CDN_IMAGE || 'https://img.ophim.live/uploads/movies/';
 
-    for (let p = startPage; p <= endPage; p++) {
-        try {
-            const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${p}`;
-            const response = await axios.get(url, { headers: HEADERS });
-            const items = response.data?.data?.items || [];
-            if (response.data?.data?.APP_DOMAIN_CDN_IMAGE) {
-                cdnUrl = response.data.data.APP_DOMAIN_CDN_IMAGE;
-            }
-            allItems = allItems.concat(items);
-        } catch (e) {
-            console.error(`Lỗi tải trang ${p}:`, e.message);
-        }
-    }
-
-    return allItems.slice(0, limit).map(item => ({
+    return items.map(item => ({
         title: item.name,
-        origin_name: item.origin_name,
         slug: item.slug,
-        poster: `${cdnUrl}${item.poster_url}`,
-        movie_url: `https://ophim1.com/phim/${item.slug}`
+        poster: `${cdnUrl}${item.poster_url}`
     }));
 }
 
-// 1. API Phim Bộ (Hiển thị 20 bộ phim/trang)
-app.get('/api/phim-bo', async (req, res) => {
+// 1. LINK PLAYLIST M3U TỔNG HỢP (GỘP CẢ PHIM BỘ VÀ PHIM LẺ)
+app.get('/playlist.m3u', async (req, res) => {
     try {
-        const page = Number(req.query.page) || 1;
-        const movies = await fetchMoviesCount('phim-bo', page, 20);
+        // Lấy dữ liệu từ cả 2 danh mục (mỗi loại 20 phim)
+        const [phimBo, phimLe] = await Promise.all([
+            fetchMovies('phim-bo', 1),
+            fetchMovies('phim-le', 1)
+        ]);
+
+        let m3u = '#EXTM3U\n';
+
+        // Thêm nhóm Phim Bộ
+        phimBo.slice(0, 20).forEach(movie => {
+            const streamUrl = `https://${req.get('host')}/api/get-stream?slug=${movie.slug}`;
+            m3u += `#EXTINF:-1 group-title="Phim Bộ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `${streamUrl}\n`;
+        });
+
+        // Thêm nhóm Phim Lẻ
+        phimLe.slice(0, 20).forEach(movie => {
+            const streamUrl = `https://${req.get('host')}/api/get-stream?slug=${movie.slug}`;
+            m3u += `#EXTINF:-1 group-title="Phim Lẻ" tvg-logo="${movie.poster}", ${movie.title}\n`;
+            m3u += `${streamUrl}\n`;
+        });
+
+        res.setHeader('Content-Type', 'audio/x-mpegurl');
+        res.send(m3u);
+    } catch (error) {
+        res.status(500).send('#EXTM3U\n# Error loading playlist');
+    }
+});
+
+// 2. API DẠNG JSON GỘP CẢ 2 DANH MỤC
+app.get('/api/all-movies', async (req, res) => {
+    try {
+        const [phimBo, phimLe] = await Promise.all([
+            fetchMovies('phim-bo', 1),
+            fetchMovies('phim-le', 1)
+        ]);
+
         res.json({
             status: 'success',
-            category: 'phim-bo',
-            page: page,
-            total: movies.length,
-            data: movies
+            phim_bo: phimBo.slice(0, 20),
+            phim_le: phimLe.slice(0, 20)
         });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
     }
 });
 
-// 2. API Phim Lẻ (Hiển thị 20 bộ phim/trang)
-app.get('/api/phim-le', async (req, res) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const movies = await fetchMoviesCount('phim-le', page, 20);
-        res.json({
-            status: 'success',
-            category: 'phim-le',
-            page: page,
-            total: movies.length,
-            data: movies
-        });
-    } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
-    }
-});
-
-// 3. API Tất cả phim mới (Hiển thị 20 phim/trang)
-app.get('/api/movies', async (req, res) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const movies = await fetchMoviesCount('phim-moi-cap-nhat', page, 20);
-        res.json({
-            status: 'success',
-            category: 'phim-moi',
-            page: page,
-            total: movies.length,
-            data: movies
-        });
-    } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
-    }
-});
-
-// 4. Lấy link stream video m3u8
+// 3. API LẤY LINK PHÁT STREAM M3U8
 app.get('/api/get-stream', async (req, res) => {
     const slug = req.query.slug || req.query.url;
-    if (!slug) return res.status(400).json({ error: 'Thiếu tham số slug/url' });
+    if (!slug) return res.status(400).send('Missing slug');
 
     try {
         const cleanSlug = slug.includes('/') ? slug.split('/').pop() : slug;
@@ -109,12 +90,12 @@ app.get('/api/get-stream', async (req, res) => {
         }
 
         if (streamUrl) {
-            res.json({ status: 'success', stream_url: streamUrl });
+            res.redirect(streamUrl);
         } else {
-            res.status(404).json({ status: 'error', message: 'Không tìm thấy luồng m3u8' });
+            res.status(404).send('Stream not found');
         }
     } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
+        res.status(500).send('Error getting stream');
     }
 });
 
