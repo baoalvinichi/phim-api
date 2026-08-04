@@ -9,66 +9,73 @@ const HEADERS = {
     'Referer': 'https://ophim1.com/'
 };
 
-// Hàm lấy phim ngắn gọn
-async function fetchMovies(endpoint, page = 1) {
+// Hàm lấy dữ liệu an toàn
+async function fetchMovies(endpoint) {
     try {
-        const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=${page}`;
-        const response = await axios.get(url, { headers: HEADERS, timeout: 5000 });
+        const url = `https://ophim1.com/v1/api/danh-sach/${endpoint}?page=1`;
+        const response = await axios.get(url, { headers: HEADERS, timeout: 4000 });
         const items = response.data?.data?.items || [];
         const cdnUrl = response.data?.data?.APP_DOMAIN_CDN_IMAGE || 'https://img.ophim.live/uploads/movies/';
 
-        return items.map(item => ({
-            title: item.name ? item.name.replace(/,/g, ' -') : 'Phim',
-            slug: item.slug,
-            poster: `${cdnUrl}${item.poster_url}`
-        }));
+        if (items.length > 0) {
+            return items.slice(0, 20).map(item => ({
+                title: item.name ? item.name.replace(/,/g, ' -') : 'Phim',
+                slug: item.slug,
+                poster: `${cdnUrl}${item.poster_url}`
+            }));
+        }
     } catch (e) {
-        return [];
+        console.error(`Lỗi fetch ${endpoint}:`, e.message);
     }
+    return [];
 }
 
-// Route Ping giữ server không bị ngủ
 app.get('/', (req, res) => res.send('API OK'));
 
-// Playlist M3U chuẩn TiviMate VOD
+// Playlist M3U tối ưu riêng cho TiviMate
 app.get(['/playlist.m3u', '/playlist.m3u8'], async (req, res) => {
     try {
-        const [phimBo, phimLe] = await Promise.all([
-            fetchMovies('phim-bo', 1),
-            fetchMovies('phim-le', 1)
-        ]);
+        let phimBo = await fetchMovies('phim-bo');
+        let phimLe = await fetchMovies('phim-le');
 
-        let m3u = '#EXTM3U x-tvg-url=""\n';
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = req.get('host');
         const baseUrl = `${protocol}://${host}`;
 
-        // Danh mục PHIM BỘ
-        phimBo.slice(0, 20).forEach(movie => {
-            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM BỘ", ${movie.title}\n`;
-            m3u += `${streamUrl}\n`;
-        });
+        let m3u = '#EXTM3U\n';
 
-        // Danh mục PHIM LẺ
-        phimLe.slice(0, 20).forEach(movie => {
-            const streamUrl = `${baseUrl}/api/get-stream?slug=${movie.slug}`;
-            m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM LẺ", ${movie.title}\n`;
-            m3u += `${streamUrl}\n`;
-        });
+        // Nhóm Phim Bộ
+        if (phimBo.length > 0) {
+            phimBo.forEach(movie => {
+                m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM BỘ", ${movie.title}\n`;
+                m3u += `${baseUrl}/api/get-stream?slug=${movie.slug}\n`;
+            });
+        } else {
+            m3u += `#EXTINF:-1 group-title="PHIM BỘ", Phim Bộ Mẫu\nhttps://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8\n`;
+        }
+
+        // Nhóm Phim Lẻ
+        if (phimLe.length > 0) {
+            phimLe.forEach(movie => {
+                m3u += `#EXTINF:-1 tvg-logo="${movie.poster}" group-title="PHIM LẺ", ${movie.title}\n`;
+                m3u += `${baseUrl}/api/get-stream?slug=${movie.slug}\n`;
+            });
+        } else {
+            m3u += `#EXTINF:-1 group-title="PHIM LẺ", Phim Lẻ Mẫu\nhttps://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8\n`;
+        }
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
         res.status(200).send(m3u);
     } catch (error) {
-        res.status(500).send('#EXTM3U\n# Error');
+        res.status(200).send('#EXTM3U\n#EXTINF:-1 group-title="PHIM", Phim Mẫu\nhttps://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8\n');
     }
 });
 
-// Chuyển hướng luồng phát
+// Chuyển hướng luồng phát m3u8
 app.get('/api/get-stream', async (req, res) => {
     const slug = req.query.slug || req.query.url;
-    if (!slug) return res.status(400).send('Missing slug');
+    if (!slug) return res.redirect('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
 
     try {
         const cleanSlug = slug.includes('/') ? slug.split('/').pop() : slug;
@@ -84,10 +91,10 @@ app.get('/api/get-stream', async (req, res) => {
         if (streamUrl) {
             res.redirect(302, streamUrl);
         } else {
-            res.status(404).send('Stream not found');
+            res.redirect('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
         }
     } catch (error) {
-        res.status(500).send('Error');
+        res.redirect('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
     }
 });
 
